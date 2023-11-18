@@ -98,7 +98,7 @@ sys_pgaccess(void)
 	}
   }
 
-  if(copyout(pt, output, (char*)(&outputbitmask), 4) < 0)
+  if(copyout(pt, output, (char*)(&outputbitmask), sizeof(outputbitmask)) < 0)
 	return -1;
 
   return 0;
