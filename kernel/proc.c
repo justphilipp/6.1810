@@ -125,6 +125,18 @@ found:
   p->pid = allocpid();
   p->state = USED;
 
+
+  // alarm fields
+  p->alarm_ticks = 0;
+  p->alarm_handler = 0;
+  p->alarm_since = 0;
+  p->alarm_on = 0;
+  if((p->alarm_trapframe = (struct trapframe *)kalloc()) == 0){
+    freeproc(p);
+	release(&p->lock);
+	return 0;
+  }
+
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
     freeproc(p);
@@ -155,6 +167,8 @@ found:
 static void
 freeproc(struct proc *p)
 {
+  if(p->alarm_trapframe)
+	kfree((void*)p->alarm_trapframe);
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;

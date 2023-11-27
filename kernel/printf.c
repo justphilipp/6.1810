@@ -125,6 +125,7 @@ panic(char *s)
   panicked = 1; // freeze uart output from other CPUs
   for(;;)
     ;
+  // backtrace();
 }
 
 void
@@ -133,3 +134,39 @@ printfinit(void)
   initlock(&pr.lock, "pr");
   pr.locking = 1;
 }
+
+
+void 
+bt_helper(uint64 fp, uint64 bottom)
+{
+  if(fp < bottom){
+    // printf("%x, %x\n", fp, bottom);
+//	return;
+  
+  printf("%p\n", *(uint64*)(fp - 8));
+  bt_helper(*(uint64 *)(fp - 16), bottom);
+  }
+}
+
+void
+backtrace(void)
+{
+  uint64 fp = r_fp();
+  // printf("%p,%p,%p,%p\n", fp, fp - 8, *((uint64 *)(fp - 8)), (uint64*)*((uint64*)(fp - 8)));
+  uint64 bottom = PGROUNDUP(fp);
+  bt_helper(fp, bottom);
+}
+
+/*
+void 
+backtrace(void)
+{
+  // uint64 *test = (uint64*)r_fp();
+  // printf("%p, %p, %p, %p\n", test, test[-1], (test - 1), *(test - 1));
+  for (uint64* fp = (uint64*)r_fp(), *bottom = (uint64*)PGROUNDDOWN((uint64)fp);
+      fp > bottom ; fp = (uint64*) *(fp -2))
+  {
+    printf("%p\n", *(fp - 1)); // 获取并打印返回地址
+  }
+}
+*/

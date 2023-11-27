@@ -85,6 +85,14 @@ enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 struct proc {
   struct spinlock lock;
 
+
+  int alarm_ticks;                  // alarm interval
+  void (*alarm_handler)();                // handler function
+  int alarm_since;               // how many ticks since last call to alarm handler
+  int alarm_on;
+  struct trapframe* alarm_trapframe;
+
+
   // p->lock must be held when using these:
   enum procstate state;        // Process state
   void *chan;                  // If non-zero, sleeping on chan
