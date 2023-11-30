@@ -308,15 +308,24 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
+  // char *mem;
 
-  for(i = 0; i < sz; i += PGSIZE){
-    if((pte = walk(old, i, 0)) == 0)
-      panic("uvmcopy: pte should exist");
-    if((*pte & PTE_V) == 0)
-      panic("uvmcopy: page not present");
-    pa = PTE2PA(*pte);
-    flags = PTE_FLAGS(*pte);
+	for(i = 0; i < sz; i += PGSIZE){
+		if((pte = walk(old, i, 0)) == 0)
+			panic("uvmcopy: pte should exist");
+		if((*pte & PTE_V) == 0)
+			panic("uvmcopy: page not present");
+		pa = PTE2PA(*pte);
+		// (*pte) |= PTE_C;
+		if(*pte & PTE_W)
+		  (*pte) |= PTE_C;
+		(*pte) &= (~PTE_W);
+		flags = PTE_FLAGS(*pte);
+		// uvmunmap(new, PGROUNDDOWN(i), 1, 1);
+		if(mappages(new, i, PGSIZE, pa, flags) != 0)
+			goto err;
+		incref((void *)pa);
+	/*
     if((mem = kalloc()) == 0)
       goto err;
     memmove(mem, (char*)pa, PGSIZE);
@@ -324,6 +333,7 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
       kfree(mem);
       goto err;
     }
+	*/
   }
   return 0;
 
@@ -348,17 +358,42 @@ uvmclear(pagetable_t pagetable, uint64 va)
 // Copy from kernel to user.
 // Copy len bytes from src to virtual address dstva in a given page table.
 // Return 0 on success, -1 on error.
+/*
 int
 copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
   uint64 n, va0, pa0;
-
+	pte_t *pte;
+	uint flags;
+//	struct proc *p = myproc();
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
-    pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
-      return -1;
-    n = PGSIZE - (dstva - va0);
+    pte = walk(pagetable, va0, 0);
+		pa0 = PTE2PA(*pte);
+		if(pte && (*pte & (PTE_C | PTE_U | PTE_V))){
+			flags = ((PTE_FLAGS(*pte) & (~PTE_C)) | PTE_W);
+			char *mem;
+			if((mem = kalloc()) == 0){
+				// setkilled(p);
+				// break;
+				return -1;
+			}
+			memmove(mem, (char *)src, len);
+			uvmunmap(pagetable, va0, 1, 1);
+			if(mappages(pagetable, va0, PGSIZE, (uint64)mem, flags) != 0){
+				kfree(mem);
+				// setkilled(p);
+				// break;
+				// return -1;
+			}
+		} else {
+			return -1;
+		}
+
+		pa0 = walkaddr(pagetable, va0);
+		if(pa0 == 0)
+			return -1;
+		n = PGSIZE - (dstva - va0);
     if(n > len)
       n = len;
     memmove((void *)(pa0 + (dstva - va0)), src, n);
@@ -369,6 +404,69 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
   }
   return 0;
 }
+*/
+
+int 
+is_cow_fault(pagetable_t pagetable, uint64 va)
+{
+  if (va >= MAXVA)
+    return 0;
+  pte_t* pte = walk(pagetable, PGROUNDDOWN(va), 0);
+	return pte && ((*pte & (PTE_C | PTE_U | PTE_V)) == (PTE_C | PTE_U | PTE_V));
+  // return pte && (*pte & (PTE_V | PTE_U | PTE_C));
+}
+
+int
+handle_cow_fault(pagetable_t pagetable, uint64 va)
+{
+  va = PGROUNDDOWN(va);
+  pte_t* pte = walk(pagetable, va, 0);
+  if (!pte) {
+    return -1;
+  }
+  uint64 pa = PTE2PA(*pte);
+  uint flags = (PTE_FLAGS(*pte) & ~PTE_C) | PTE_W;  // 取消写时复制标志，设置写权限
+
+  char* mem = kalloc();
+  if (!mem) {
+    return -1;
+  }
+  memmove(mem, (char*)pa, PGSIZE);
+  uvmunmap(pagetable, va, 1, 1);  // 取消映射
+
+  if (mappages(pagetable, va, PGSIZE, (uint64)mem, flags) != 0) {
+    kfree(mem);
+    return -1;
+  }
+  return 0;
+}
+
+int copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
+{
+  uint64 n, va0, pa0;
+  while(len > 0){
+    va0 = PGROUNDDOWN(dstva);
+    if (is_cow_fault(pagetable, dstva)) {
+      if (handle_cow_fault(pagetable, dstva) < 0) {
+				panic("copyout(): alloc failed!");
+        return -1;
+      }
+    }
+		pa0 = walkaddr(pagetable, va0);
+    if(pa0 == 0)
+      return -1;
+		n = PGSIZE - (dstva - va0);
+    if(n > len)
+      n = len;
+    memmove((void *)(pa0 + (dstva - va0)), src, n);
+
+    len -= n;
+    src += n;
+    dstva = va0 + PGSIZE;
+  }
+  return 0;
+}
+
 
 // Copy from user to kernel.
 // Copy len bytes to dst from virtual address srcva in a given page table.
@@ -394,6 +492,7 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
   }
   return 0;
 }
+
 
 // Copy a null-terminated string from user to kernel.
 // Copy bytes to dst from virtual address srcva in a given page table,

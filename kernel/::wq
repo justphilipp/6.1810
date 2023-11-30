@@ -69,53 +69,39 @@ usertrap(void)
     // ok
   } else if(r_scause() == 15){
 		// page fault
-		
 		uint64 va, pa;
-		uint flags = 0;
+		uint flags;
 		pte_t *pte;
-		va = PGROUNDDOWN(r_stval());
-		if(va >= MAXVA)
-			goto err;
-		pte = walk(p->pagetable, va, 0);
-		if(!pte)
-			goto err;
-		pa = PTE2PA(*pte);
-		flags = PTE_FLAGS(*pte) & (~(PTE_C));
-		flags |= PTE_W;
-		if(pte && ((*pte & (PTE_C | PTE_U | PTE_V)) == (PTE_C | PTE_U | PTE_V))){
+		va = r_stval();
+		pa = walkaddr(p->pagetable, va);
+		pte = PA2PTE(*pte);
+		if(*pte & (PTE_C | PTE_O)){
 		  char *mem;
 			if((mem = kalloc()) == 0){
+				setkilled(p);
 				goto err;
 			}
 			memmove(mem, (char *)pa, PGSIZE);
-			uvmunmap(p->pagetable, va, 1, 1);
+			flags = PTE_FLAGS(*pte) & (~(PTE_C | PTE_O));
+			flags |= PTE_W;
 			if(mappages(p->pagetable, va, PGSIZE, (uint64)mem, flags) != 0){
 				kfree(mem);
+				setkilled(p);
 				goto err;
 			}
+			kfree((void *)pa);
 		} else {
 			// originally read-only
 			// should not be wrote
 			setkilled(p);
 		}
-	
-/*
-		uint64 stval = r_stval();
-		if(is_cow_fault(p->pagetable, stval)){
-			if(handle_cow_fault(p->pagetable, stval) < 0){
-				printf("usertrap(): alloc failed!\n");
-				p->killed = 1;
-			}
-		} else goto err;
-		*/
-	}
-	else {
-err:
+	} else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     setkilled(p);
   }
 
+err:
   if(killed(p))
     exit(-1);
 

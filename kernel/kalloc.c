@@ -18,6 +18,13 @@ struct run {
   struct run *next;
 };
 
+#define PHY_PAGES ((uint64)(PHYSTOP - KERNBASE) / PGSIZE)
+#define PA2RCI(pa) ((uint64)pa - (uint64)KERNBASE) / PGSIZE  // Physical address -> Reference count index
+int ref_cnt[PHY_PAGES];
+
+struct spinlock ref_lock;
+
+
 struct {
   struct spinlock lock;
   struct run *freelist;
@@ -26,8 +33,11 @@ struct {
 void
 kinit()
 {
+	initlock(&ref_lock, "ref_lock");
   initlock(&kmem.lock, "kmem");
   freerange(end, (void*)PHYSTOP);
+	// clear reference count of physical pages
+	memset(ref_cnt, 0, sizeof(int) * PHY_PAGES);
 }
 
 void
@@ -36,7 +46,7 @@ freerange(void *pa_start, void *pa_end)
   char *p;
   p = (char*)PGROUNDUP((uint64)pa_start);
   for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE)
-    kfree(p);
+		kfree(p);
 }
 
 // Free the page of physical memory pointed at by pa,
@@ -46,6 +56,12 @@ freerange(void *pa_start, void *pa_end)
 void
 kfree(void *pa)
 {
+	decref(pa);
+	uint64 index;
+	index = PA2RCI(pa);
+	if(ref_cnt[index] > 0)
+		return;
+
   struct run *r;
 
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
@@ -53,9 +69,7 @@ kfree(void *pa)
 
   // Fill with junk to catch dangling refs.
   memset(pa, 1, PGSIZE);
-
   r = (struct run*)pa;
-
   acquire(&kmem.lock);
   r->next = kmem.freelist;
   kmem.freelist = r;
@@ -69,14 +83,44 @@ void *
 kalloc(void)
 {
   struct run *r;
+	int index;
 
   acquire(&kmem.lock);
   r = kmem.freelist;
-  if(r)
+  if(r){
     kmem.freelist = r->next;
+		// uint64 diff;
+		// diff = (uint64)r - (uint64)KERNBASE;
+		// printf("kalloc diff: %x, index : %d, ref count : %d\n", diff, index, ref_cnt[index]);
+	}
   release(&kmem.lock);
 
-  if(r)
+  if(r){
+		index = PA2RCI(r);
+		ref_cnt[index] = 1;
     memset((char*)r, 5, PGSIZE); // fill with junk
+	}
   return (void*)r;
+}
+
+void
+incref(void *pa)
+{
+  acquire(&ref_lock);
+	int index;
+	index = PA2RCI(pa);
+	//if(!ref_cnt[index])
+	//	panic("kref");
+	ref_cnt[index]++;
+  release(&ref_lock);
+}
+
+void
+decref(void *pa)
+{
+  acquire(&ref_lock);
+	int index;
+	index = PA2RCI(pa);
+	ref_cnt[index]--;
+  release(&ref_lock);
 }
