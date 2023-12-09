@@ -39,3 +39,6 @@ void free(void*);
 int atoi(const char*);
 int memcmp(const void *, const void *, uint);
 void *memcpy(void *, const void *, uint);
+
+// thread_switch.S
+void thread_switch(uint64, uint64);
