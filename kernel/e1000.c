@@ -40,7 +40,7 @@ e1000_init(uint32 *xregs)
   __sync_synchronize();
 
   // [E1000 14.5] Transmit initialization
-  memset(tx_ring, 0, sizeof(tx_ring));
+  memset(tx_ring, 0, sizeof(tx_ring));  // init the whole array
   for (i = 0; i < TX_RING_SIZE; i++) {
     tx_ring[i].status = E1000_TXD_STAT_DD;
     tx_mbufs[i] = 0;
@@ -92,6 +92,7 @@ e1000_init(uint32 *xregs)
   regs[E1000_IMS] = (1 << 7); // RXDW -- Receiver Descriptor Write Back
 }
 
+
 int
 e1000_transmit(struct mbuf *m)
 {
@@ -102,7 +103,28 @@ e1000_transmit(struct mbuf *m)
   // the TX descriptor ring so that the e1000 sends it. Stash
   // a pointer so that it can be freed after sending.
   //
-  
+	acquire(&e1000_lock);
+	int index = regs[E1000_TDT];
+	// check whether overflowing
+	if(!(tx_ring[index].status & E1000_TXD_STAT_DD)){
+		// prev transmission not done
+		release(&e1000_lock);
+		return -1;
+	}
+
+	if(tx_mbufs[index])
+		mbuffree(tx_mbufs[index]);
+
+	tx_ring[index].addr = (uint64)m->head;
+	tx_ring[index].length = (uint16)m->len;
+	tx_ring[index].cmd = (E1000_TXD_CMD_EOP | E1000_TXD_CMD_RS);
+	// tx_ring[index].cmd = (E1000_TXD_CMD_EOP | E1000_TXD_CMD_RS);
+	tx_mbufs[index] = m;
+
+	// __sync_synchronize();
+	regs[E1000_TDT] = (regs[E1000_TDT] + 1) % TX_RING_SIZE;
+
+	release(&e1000_lock);
   return 0;
 }
 
@@ -115,7 +137,36 @@ e1000_recv(void)
   // Check for packets that have arrived from the e1000
   // Create and deliver an mbuf for each packet (using net_rx()).
   //
+	// int start = (regs[E1000_RDT] + 1) % RX_RING_SIZE;
+	// int end = regs[E1000_RDH];
+	// struct mbuf *m;
+
+
+	//acquire(&e1000_lock);
+
+	// regs[E1000_RDT]  = (regs[E1000_RDT] + 1) % RX_RING_SIZE;
+  while(1){
+		int start = (regs[E1000_RDT] + 1) % RX_RING_SIZE;
+	  if(!(rx_ring[start].status & E1000_TXD_STAT_DD)){
+		  break;
+	  }
+
+	  rx_mbufs[start]->len = rx_ring[start].length;
+  	net_rx(rx_mbufs[start]);
+	
+	  rx_mbufs[start] = mbufalloc(0);
+		if (!rx_mbufs[start])
+			panic("e1000");
+	  rx_ring[start].addr = (uint64)rx_mbufs[start]->head;
+	  rx_ring[start].status = 0;  // clear all bits?
+
+		// __sync_synchronize();
+		regs[E1000_RDT] = start;
+	}
+	// regs[E1000_RDT] = start;
+  // release(&e1000_lock);
 }
+
 
 void
 e1000_intr(void)
