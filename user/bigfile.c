@@ -39,6 +39,7 @@ main()
     printf("bigfile: cannot re-open big.file for reading\n");
     exit(-1);
   }
+  // printf("checkpoint!\n");
   for(i = 0; i < blocks; i++){
     int cc = read(fd, buf, sizeof(buf));
     if(cc <= 0){
@@ -50,6 +51,7 @@ main()
              *(int*)buf, i);
       exit(-1);
     }
+    // printf("read %d blocks!\n");
   }
 
   printf("bigfile done; ok\n"); 
