@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fcntl.h"
 
 struct cpu cpus[NCPU];
 
@@ -146,6 +147,13 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  for(int i = 0; i < 16; i++){
+    p->mmap[i].pf = 0;
+    p->mmap[i].flags = 0;
+    p->mmap[i].perm = 0;
+    p->mmap[i].len = 0;
+    p->mmap[i].addr = 0;
+  }
   return p;
 }
 
@@ -279,13 +287,22 @@ growproc(int n)
 int
 fork(void)
 {
-  int i, pid;
+  // printf("start of fork\n");
+  int i, pid, mmapindex;
   struct proc *np;
   struct proc *p = myproc();
 
   // Allocate process.
   if((np = allocproc()) == 0){
     return -1;
+  }
+
+  memmove((char *)np->mmap, (char *)p->mmap, sizeof(p->mmap));
+  // printf("sizeof(p->mmap) = %d | sizeof p->mmap = %d ", sizeof(p->mmap), sizeof p->mmap);
+  for(mmapindex = 0; mmapindex < 16; mmapindex++){
+    if(np->mmap[mmapindex].pf){
+      filedup(np->mmap[mmapindex].pf);
+    }
   }
 
   // Copy user memory from parent to child.
@@ -322,6 +339,7 @@ fork(void)
   np->state = RUNNABLE;
   release(&np->lock);
 
+  // printf("end of fork\n");
   return pid;
 }
 
@@ -346,10 +364,29 @@ reparent(struct proc *p)
 void
 exit(int status)
 {
+  // printf("start of exit\n");
   struct proc *p = myproc();
+  struct mmaparea *m;
 
   if(p == initproc)
     panic("init exiting");
+
+  for(int i = 0; i < 16; i++){
+    m = &p->mmap[i];
+    if(m->pf){
+      if(m->flags & MAP_SHARED){
+        filewrite(m->pf, m->addr, m->len);
+      }
+      uvmunmap(p->pagetable, m->addr, m->len / PGSIZE, 1);
+      fileclose(m->pf);
+      m->pf = 0;
+      m->perm = 0;
+      m->flags = 0;
+      m->addr = 0;
+      m->len = 0;
+    }
+  }
+
 
   // Close all open files.
   for(int fd = 0; fd < NOFILE; fd++){
@@ -380,6 +417,7 @@ exit(int status)
 
   release(&wait_lock);
 
+  // printf("end of exit\n");
   // Jump into the scheduler, never to return.
   sched();
   panic("zombie exit");
@@ -390,6 +428,7 @@ exit(int status)
 int
 wait(uint64 addr)
 {
+  // printf("start of exit\n");
   struct proc *pp;
   int havekids, pid;
   struct proc *p = myproc();
@@ -429,8 +468,10 @@ wait(uint64 addr)
       return -1;
     }
     
+    // printf("before sleep of wait\n");
     // Wait for a child to exit.
     sleep(p, &wait_lock);  //DOC: wait-sleep
+    // printf("after sleep of wait\n");
   }
 }
 

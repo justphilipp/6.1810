@@ -2,10 +2,13 @@
 #include "param.h"
 #include "memlayout.h"
 #include "riscv.h"
+#include "fcntl.h"
 #include "spinlock.h"
+#include "sleeplock.h"
 #include "proc.h"
 #include "defs.h"
-
+#include "fs.h"
+#include "file.h"
 struct spinlock tickslock;
 uint ticks;
 
@@ -28,6 +31,53 @@ trapinithart(void)
 {
   w_stvec((uint64)kernelvec);
 }
+
+
+int
+mmap_handler(pagetable_t pagetable, uint64 va)
+{
+  int mmap_index;
+  struct proc *p = myproc();
+  void *pa;
+  int perm = 0;
+  struct mmaparea *m;
+  for(mmap_index = 0; mmap_index < 16; mmap_index++){
+    if(va >= p->mmap[mmap_index].addr && va < (p->mmap[mmap_index].addr + p->mmap[mmap_index].len)){
+      m = &p->mmap[mmap_index];
+      break;
+    }
+  }
+
+  if(mmap_index == 16)
+    return -1;
+
+  if((pa = kalloc()) == 0)
+    return -1;
+  memset(pa, 0, PGSIZE);
+  
+  // perm
+  perm |= PTE_U;
+  if(m->perm & PROT_READ)
+    perm |= PTE_R;
+  if(m->perm & PROT_WRITE)
+    perm |= PTE_W;
+  if(m->perm & PROT_EXEC)
+    perm |= PTE_X;
+
+  ilock(m->pf->ip);
+  // acquire(&in->lock);
+  readi(m->pf->ip, 0, (uint64)pa, va - m->addr, PGSIZE);
+  // release(&in->lock);
+  iunlock(m->pf->ip);
+
+
+  if(mappages(pagetable, va, PGSIZE, (uint64)pa, perm) < 0){
+    kfree(pa);
+    return -1;
+  }
+  return 0;
+}
+
 
 //
 // handle an interrupt, exception, or system call from user space.
@@ -67,7 +117,16 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
+  } else if(r_scause() == 13 || r_scause() == 12 || r_scause() == 15){
+    // page fault
+    uint64 va = r_stval();
+    int mmap_res;
+    mmap_res = mmap_handler(p->pagetable, va);
+    if(mmap_res == -1)
+      goto err;
+
   } else {
+err:
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     setkilled(p);

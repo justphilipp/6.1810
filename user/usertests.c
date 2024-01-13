@@ -2136,8 +2136,10 @@ kernmem(char *s)
     }
     int xstatus;
     wait(&xstatus);
-    if(xstatus != -1)  // did kernel kill child?
+    if(xstatus != -1){  // did kernel kill child?
+      printf("exit!\n");
       exit(1);
+    }
   }
 }
 

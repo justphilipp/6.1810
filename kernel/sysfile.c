@@ -503,3 +503,91 @@ sys_pipe(void)
   }
   return 0;
 }
+
+uint64
+sys_mmap(void)
+{
+  struct proc *p = myproc();
+  int len, perm, flags, fd, offset;
+  struct file *file;
+  int i;
+  uint64 addr;
+
+  argint(1, &len);
+  argint(2, &perm);
+  argint(3, &flags);
+  argfd(4, &fd, &file);
+  argint(5, &offset);
+
+  char c = file->writable;
+  if((perm & PROT_WRITE) && (!file->writable) && (flags & MAP_SHARED)){
+    printf("WRITE PERMISSION! fd = %d, perm = %d, file->writeable = %d\n", fd, perm, (uint64)c);
+    return -1;
+  }
+  filedup(file);
+
+  addr = p->sz;
+  p->sz += len;
+  for(i = 0; i < 16; i++){
+    if(!p->mmap[i].pf){
+      p->mmap[i].pf = file;
+      p->mmap[i].flags = flags;
+      p->mmap[i].perm = perm;
+      p->mmap[i].len = len;
+      p->mmap[i].addr = addr;
+      break;
+    }
+  }
+  if(i == 16){
+    fileclose(file);
+    return 0;
+  }
+  return (uint64)addr;
+}
+
+uint64
+sys_munmap(void)
+{
+  struct proc *p = myproc();
+  struct mmaparea *m;
+  uint64 addr;
+  int len, i;
+  uint64 start;
+  // uint64 end;
+  argaddr(0, &addr);
+  argint(1, &len);
+
+  for(i = 0; i < 16; i++){
+    m = &p->mmap[i];
+    if(addr >= m->addr && addr < (m->addr + m->len)){
+      break;
+    }
+  }
+  if(i == 16)
+    return -1;
+
+  if(m->flags & MAP_SHARED){
+    filewrite(m->pf, m->addr, m->len);
+  }
+
+  if(len >= m->len){
+    fileclose(m->pf);
+    m->addr = 0;
+    m->pf = 0;
+    m->flags = 0;
+    m->perm = 0;
+    m->len = 0;
+  } else {
+    // since only front or tail, this logic could solve the problem
+    m->addr = (addr == m->addr) ? addr + len : addr;
+    m->len -= len;
+  }
+
+
+  
+  start = PGROUNDUP(addr);
+  // len = PGROUNDUP(len);
+  // end = PGROUNDDOWN((uint64)addr + len);
+  uvmunmap(p->pagetable, start, len / PGSIZE, 1);
+  return 0;
+}
